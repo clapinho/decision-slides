@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "decision-slides"
+version = "0.1.0"
+description = "CLI wizard to build credit decision presentation slides (slips format)"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "click>=8.0",
+    "requests>=2.28",
+    "matplotlib>=3.7",
+    "seaborn>=0.12",
+    "plotly>=5.0",
+    "kaleido>=0.2",
+    "jinja2>=3.1",
+    "rich>=13.0",
+    "pyyaml>=6.0",
+    "pandas>=1.5",
+]
+
+[project.optional-dependencies]
+google = [
+    "google-auth>=2.0",
+    "google-auth-oauthlib>=1.0",
+    "google-api-python-client>=2.0",
+]
+dev = [
+    "pytest>=7.0",
+    "black>=23.0",
+    "ruff>=0.1",
+]
+
+[project.scripts]
+decision-slides = "decision_slides.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.ruff]
+line-length = 100
