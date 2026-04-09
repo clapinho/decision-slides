@@ -9,7 +9,6 @@ from typing import Optional
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 import numpy as np
 
 
@@ -25,17 +24,20 @@ def cohort_palette(n: int) -> list[str]:
 # ── NPV charts ─────────────────────────────────────────────────────────────
 
 def npv_line_chart(
-    data: dict[str, dict[int, float]],   # {type_label: {band: value}}
-    title: str = "NPV by Aki Band",
+    data: dict[str, dict[int, float]],   # {series_label: {band: value}}
+    title: str = "NPV by Risk Band",
+    y_label: str = "NPV",
+    band_label: str = "Band",
     colors: Optional[dict[str, str]] = None,
-    brand_color: str = "#820AD1",
+    brand_color: str = "#7c3aed",
 ) -> str:
     """Grouped line chart with one series per model type. Returns base64 PNG."""
+    keys = list(data.keys())
     default_colors = {
-        list(data.keys())[0]: brand_color,
-        list(data.keys())[1] if len(data) > 1 else "__": "#3B82F6",
-        list(data.keys())[2] if len(data) > 2 else "__": "#F59E0B",
-        list(data.keys())[3] if len(data) > 3 else "__": "#6B7280",
+        keys[0] if len(keys) > 0 else "__": brand_color,
+        keys[1] if len(keys) > 1 else "__": "#3B82F6",
+        keys[2] if len(keys) > 2 else "__": "#F59E0B",
+        keys[3] if len(keys) > 3 else "__": "#6B7280",
     }
     colors = {**default_colors, **(colors or {})}
 
@@ -56,8 +58,8 @@ def npv_line_chart(
     ax.yaxis.grid(True, color="#e5e7eb", linewidth=0.7, zorder=0)
     ax.set_axisbelow(True)
     ax.set_xticks(bands)
-    ax.set_xticklabels([f"Aki {b}" for b in bands], fontsize=10, color="#374151")
-    ax.set_ylabel("NPV with Mgm (USD)", fontsize=11, color="#374151")
+    ax.set_xticklabels([f"{band_label} {b}" for b in bands], fontsize=10, color="#374151")
+    ax.set_ylabel(y_label, fontsize=11, color="#374151")
     ax.set_title(title, fontsize=13, fontweight="bold", color="#111827", pad=12)
     ax.tick_params(colors="#6b7280", labelsize=10)
     for spine in ax.spines.values():
@@ -69,16 +71,19 @@ def npv_line_chart(
 
 def npv_bar_chart(
     data: dict[str, dict[int, float]],
-    title: str = "NPV by Aki Band",
+    title: str = "NPV by Risk Band",
+    y_label: str = "NPV",
+    band_label: str = "Band",
     colors: Optional[dict[str, str]] = None,
-    brand_color: str = "#820AD1",
+    brand_color: str = "#7c3aed",
 ) -> str:
-    """Grouped bar chart with one bar group per aki band. Returns base64 PNG."""
+    """Grouped bar chart with one bar group per risk band. Returns base64 PNG."""
+    keys = list(data.keys())
     default_colors = {
-        list(data.keys())[0]: brand_color,
-        list(data.keys())[1] if len(data) > 1 else "__": "#3B82F6",
-        list(data.keys())[2] if len(data) > 2 else "__": "#F59E0B",
-        list(data.keys())[3] if len(data) > 3 else "__": "#6B7280",
+        keys[0] if len(keys) > 0 else "__": brand_color,
+        keys[1] if len(keys) > 1 else "__": "#3B82F6",
+        keys[2] if len(keys) > 2 else "__": "#F59E0B",
+        keys[3] if len(keys) > 3 else "__": "#6B7280",
     }
     colors = {**default_colors, **(colors or {})}
 
@@ -101,8 +106,8 @@ def npv_bar_chart(
     ax.yaxis.grid(True, color="#e5e7eb", linewidth=0.7, zorder=0)
     ax.set_axisbelow(True)
     ax.set_xticks(x)
-    ax.set_xticklabels([f"Aki {b}" for b in bands], fontsize=10, color="#374151")
-    ax.set_ylabel("NPV with Mgm (USD)", fontsize=11, color="#374151")
+    ax.set_xticklabels([f"{band_label} {b}" for b in bands], fontsize=10, color="#374151")
+    ax.set_ylabel(y_label, fontsize=11, color="#374151")
     ax.set_title(title, fontsize=13, fontweight="bold", color="#111827", pad=12)
     ax.tick_params(colors="#6b7280", labelsize=10)
     for spine in ax.spines.values():
@@ -115,75 +120,92 @@ def npv_bar_chart(
 # ── Cohort monitoring chart ────────────────────────────────────────────────
 
 def cohort_monitoring_chart(
-    df,                             # pandas DataFrame with cohort monitoring data
+    df,
     metric: str,
-    aki_bands: list[int],
-    legend_map: dict[str, str],     # e.g. {"static": "actuals", "running": "pClip"}
+    risk_bands: list[int],
+    band_column: str = "risk_band",
+    legend_map: Optional[dict[str, str]] = None,
+    overlay_keys: Optional[list[str]] = None,  # non-cohort rows (e.g. baselines)
     max_month: int = 18,
-    brand_color: str = "#820AD1",
+    brand_color: str = "#7c3aed",
 ) -> str:
     """
-    3-row × ceil(n_bands/3)-col grid of line charts, one panel per aki band.
-    Static/running lines styled with dashed/dotted black/gray.
-    Cohort lines coloured with cubehelix palette.
+    Grid of line charts — one panel per risk band value.
+    Cohort rows are coloured with a cubehelix palette.
+    Overlay rows (e.g. "baseline", "challenger") are styled with dashed/dotted lines.
     Returns base64 PNG.
-    """
-    import math, pandas as pd
 
+    Args:
+        df: DataFrame with columns [band_column, cohort, month, metric, ...]
+        metric: metric column name to plot
+        risk_bands: list of band values to include
+        band_column: DataFrame column name for the band identifier
+        legend_map: rename overlay cohort labels {original: display_name}
+        overlay_keys: cohort values that are overlays (not individual cohorts);
+                      detected automatically if None (non-numeric cohort values)
+        max_month: x-axis upper limit
+    """
+    import math
+    import pandas as pd
+
+    legend_map = legend_map or {}
     df = df.copy()
     df["month"] = pd.to_numeric(df["month"], errors="coerce")
     df[metric] = pd.to_numeric(df[metric], errors="coerce")
 
-    # Build business_calendar_month from cohort + month
-    def _bcm(row):
-        cohort = str(row["cohort"])
-        try:
-            if "Q" in cohort:
-                year, q = cohort.split("Q")
-                start_month = (int(q) - 1) * 3 + 1
-            else:
-                year, m_part = cohort[:4], cohort[4:]
-                start_month = int(m_part) if m_part.isdigit() else 1
-            return int(year) * 12 + start_month - 1 + int(row["month"])
-        except Exception:
-            return None
-
-    df["bcm"] = df.apply(_bcm, axis=1)
-
-    cohorts = sorted(df[df["cohort"].astype(str).str.match(r"^\d{4}Q?\d")]["cohort"].unique())
+    # Detect cohort rows: anything that looks like YYYY or YYYYQn
+    cohort_mask = df["cohort"].astype(str).str.match(r"^\d{4}Q?\d")
+    cohorts = sorted(df[cohort_mask]["cohort"].unique())
     palette = cohort_palette(max(len(cohorts), 1))
     cohort_color = {c: palette[i] for i, c in enumerate(cohorts)}
 
-    static_styles  = {"color": "black",  "linestyle": "--", "linewidth": 1.5, "alpha": 0.9}
-    running_styles = {"color": "gray",   "linestyle": ":", "linewidth": 1.5, "alpha": 0.9}
+    # Overlay rows: anything not a dated cohort
+    if overlay_keys is None:
+        overlay_keys = sorted(df[~cohort_mask]["cohort"].astype(str).unique())
 
-    n_bands = len(aki_bands)
-    n_cols = min(3, n_bands)
+    overlay_linestyles = ["--", ":", "-.", (0, (3, 1, 1, 1))]
+    overlay_colors = ["black", "#555", "#888", "#bbb"]
+    overlay_styles = {
+        key: {
+            "color": overlay_colors[i % len(overlay_colors)],
+            "linestyle": overlay_linestyles[i % len(overlay_linestyles)],
+            "linewidth": 1.5,
+            "alpha": 0.9,
+        }
+        for i, key in enumerate(overlay_keys)
+    }
+
+    n_bands = len(risk_bands)
+    n_cols = min(3, max(n_bands, 1))
     n_rows = math.ceil(n_bands / n_cols)
 
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(7 * n_cols, 4.5 * n_rows),
                              squeeze=False)
     fig.patch.set_facecolor("#ffffff")
 
-    for idx, band in enumerate(sorted(aki_bands)):
-        row, col = divmod(idx, n_cols)
-        ax = axes[row][col]
-        band_df = df[(df["aki_band"].astype(str) == str(band)) &
-                     (df["month"].between(0, max_month))]
+    for idx, band in enumerate(sorted(risk_bands)):
+        r, c = divmod(idx, n_cols)
+        ax = axes[r][c]
+        band_df = df[
+            (df[band_column].astype(str) == str(band)) &
+            (df["month"].between(0, max_month))
+        ]
 
-        for cohort, cdf in band_df[band_df["cohort"].astype(str).str.match(r"^\d{4}Q?\d")].groupby("cohort"):
+        # Cohort lines
+        for cohort, cdf in band_df[cohort_mask.reindex(band_df.index, fill_value=False)].groupby("cohort"):
             cdf = cdf.sort_values("month")
-            ax.plot(cdf["month"], cdf[metric], color=cohort_color.get(cohort, "#888"),
+            ax.plot(cdf["month"], cdf[metric],
+                    color=cohort_color.get(cohort, "#888"),
                     linewidth=1.2, alpha=0.85)
 
-        # Static / running overlay
-        for overlay, styles in [("static", static_styles), ("running", running_styles)]:
-            odf = band_df[band_df["cohort"].astype(str) == overlay].sort_values("month")
+        # Overlay lines
+        for key, styles in overlay_styles.items():
+            odf = band_df[band_df["cohort"].astype(str) == key].sort_values("month")
             if not odf.empty:
-                label = legend_map.get(overlay, overlay)
+                label = legend_map.get(key, key)
                 ax.plot(odf["month"], odf[metric], **styles, label=label)
 
-        ax.set_title(f"Aki {band}", fontsize=10, fontweight="600", color="#374151")
+        ax.set_title(f"Band {band}", fontsize=10, fontweight="600", color="#374151")
         ax.yaxis.grid(True, color="#e5e7eb", linewidth=0.6)
         ax.set_axisbelow(True)
         ax.tick_params(labelsize=8, colors="#6b7280")
@@ -192,15 +214,17 @@ def cohort_monitoring_chart(
 
     # Hide unused subplots
     for idx in range(n_bands, n_rows * n_cols):
-        r, c = divmod(idx, n_cols)
-        axes[r][c].set_visible(False)
+        r2, c2 = divmod(idx, n_cols)
+        axes[r2][c2].set_visible(False)
 
-    # Single legend for overlays
-    handles = [
-        plt.Line2D([0], [0], **{**static_styles,  "label": legend_map.get("static",  "actuals")}),
-        plt.Line2D([0], [0], **{**running_styles, "label": legend_map.get("running", "pClip")}),
-    ]
-    fig.legend(handles=handles, loc="upper right", fontsize=9, framealpha=0.9)
+    # Legend for overlay lines
+    if overlay_keys:
+        handles = [
+            plt.Line2D([0], [0], **{**overlay_styles[k], "label": legend_map.get(k, k)})
+            for k in overlay_keys
+        ]
+        fig.legend(handles=handles, loc="upper right", fontsize=9, framealpha=0.9)
+
     plt.tight_layout(pad=1.2)
     return _fig_to_b64(fig)
 

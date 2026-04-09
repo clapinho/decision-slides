@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Optional
@@ -22,24 +21,39 @@ class DatabricksConfig:
 @dataclass
 class NpvTablesConfig:
     """SQL table names for each model type used in NPV results."""
+    # One entry per model type you want to compare; leave blank to skip that series.
     current: str = ""
-    pclip: str = ""
-    actuals: str = ""
-    sec: str = ""
-    npv_column_current: str = "npv_with_mgm"
-    npv_column_others: str = "npv"
-    scenario_filter: str = "risk-worsening"
-    aki_bands: list[int] = field(default_factory=lambda: list(range(21, 31)))
+    series_2: str = ""   # e.g. a challenger or alternative model
+    series_3: str = ""
+    series_4: str = ""
+    # Series labels shown in the chart legend
+    label_current: str = "current"
+    label_series_2: str = "series 2"
+    label_series_3: str = "series 3"
+    label_series_4: str = "series 4"
+    # SQL column that holds the NPV value (same name expected in every table)
+    npv_column: str = "npv"
+    # SQL column that holds the risk band identifier
+    band_column: str = "risk_band"
+    # Optional WHERE clause value for filtering by scenario; leave blank to skip
+    scenario_column: str = "scenario_name"
+    scenario_filter: str = ""
+    # Risk band values to include (empty = include all returned by the query)
+    risk_bands: list[int] = field(default_factory=list)
     chart_type: str = "line"  # "line" or "bar"
 
 
 @dataclass
 class CohortMonitoringConfig:
     table: str = ""
-    aki_bands: list[int] = field(default_factory=lambda: [21, 25, 26, 27, 28])
-    # legend label renames: original key → display label
-    legend_map: dict[str, str] = field(default_factory=lambda: {"static": "actuals", "running": "pClip"})
-    # empty list = include all 23 metrics
+    # Risk band values to chart (empty = all bands returned by the query)
+    risk_bands: list[int] = field(default_factory=list)
+    # SQL column that holds the risk band identifier
+    band_column: str = "risk_band"
+    # Rename cohort labels in the legend: {original_column_value: display_name}
+    # e.g. {"baseline": "Actuals", "challenger": "New Model"}
+    legend_map: dict[str, str] = field(default_factory=dict)
+    # Metric columns to chart; empty = chart all numeric columns found in the table
     metrics: list[str] = field(default_factory=list)
     max_month: int = 18
 
@@ -69,7 +83,7 @@ class GoogleSlidesRef:
 
 @dataclass
 class AppendixSource:
-    source_type: str = "google_slides"  # "google_slides" | "images" | "none"
+    source_type: str = "none"  # "google_slides" | "images" | "none"
     google_slides: Optional[GoogleSlidesRef] = None
     image_paths: list[str] = field(default_factory=list)
 
@@ -80,24 +94,22 @@ class PresentationConfig:
     title: str = ""
     squad: str = ""
     date: str = ""
-    brand_color: str = "#820AD1"
+    brand_color: str = "#7c3aed"
     output_dir: str = ""
 
     databricks: DatabricksConfig = field(default_factory=DatabricksConfig)
 
     # Per-slide references
-    cover_image: str = ""                          # local image path or Google Slides URL
-    executive_summary_text: dict = field(default_factory=dict)  # {overview, results, to_discuss}
+    cover_image: str = ""
+    executive_summary_text: dict = field(default_factory=dict)
     decision_overview: NotebookRef = field(default_factory=NotebookRef)
     tier_ii: NotebookRef = field(default_factory=NotebookRef)
-    tier_ii_aki_bands: list[int] = field(default_factory=lambda: list(range(21, 31)))
-    risks_text: dict = field(default_factory=dict)  # {risks, opportunities}
+    risks_text: dict = field(default_factory=dict)
     npv_results: NpvTablesConfig = field(default_factory=NpvTablesConfig)
     npv_levers: NotebookRef = field(default_factory=NotebookRef)
-    npv_levers_commands: list[int] = field(default_factory=list)
     iram: NotebookRef = field(default_factory=NotebookRef)
     roa: NotebookRef = field(default_factory=NotebookRef)
-    curves_overview_type: str = "google_slides"    # "notebook" | "google_slides"
+    curves_overview_type: str = "notebook"  # "notebook" | "google_slides"
     curves_overview_notebook: NotebookRef = field(default_factory=NotebookRef)
     curves_overview_slides: GoogleSlidesRef = field(default_factory=GoogleSlidesRef)
     cohort_monitoring: CohortMonitoringConfig = field(default_factory=CohortMonitoringConfig)
@@ -116,37 +128,7 @@ class PresentationConfig:
         cfg.databricks = DatabricksConfig(**data.get("databricks", {}))
         cfg.npv_results = NpvTablesConfig(**data.get("npv_results", {}))
         cfg.cohort_monitoring = CohortMonitoringConfig(**data.get("cohort_monitoring", {}))
-        # Copy remaining scalar fields
         for k, v in data.items():
             if hasattr(cfg, k) and not isinstance(v, dict):
                 setattr(cfg, k, v)
         return cfg
-
-
-# ── Known metrics for cohort monitoring (in display order) ──────────────────
-COHORT_METRICS: list[tuple[str, str]] = [
-    ("risk_adjusted_margin_perfect_provisions_100_ftp",               "Risk Adjusted Margin (Perfect Provisions)"),
-    ("cumulative_risk_adjusted_margin_perfect_provisions_100_ftp",    "Cumulative RAM (Perfect Provisions)"),
-    ("cumulative_risk_adjusted_margin_perfect_provisions_100_ftp_per_total_revenue",
-                                                                       "Cumulative RAM / Total Revenue"),
-    ("rolled_risk_adjusted_margin_60_180",                            "Rolled RAM (60–180)"),
-    ("cumulative_rolled_risk_adjusted_margin_60_180",                 "Cumulative Rolled RAM (60–180)"),
-    ("credit_losses_released",                                        "Credit Losses Released"),
-    ("cumulative_credit_losses_released",                             "Cumulative Credit Losses Released"),
-    ("net_revenues_100_ftp",                                          "Net Revenues (100% FTP)"),
-    ("gross_interest_revenue_released",                               "Gross Interest Revenue Released"),
-    ("gross_non_interest_revenue_released",                           "Gross Non-Interest Revenue Released"),
-    ("gross_revenue_released",                                        "Gross Revenue Released"),
-    ("gross_interchange_revenue_released",                            "Gross Interchange Revenue Released"),
-    ("cumulative_net_revenues_100_ftp",                               "Cumulative Net Revenues (100% FTP)"),
-    ("rolled_losses_60_180",                                          "Rolled Losses (60–180)"),
-    ("cumulative_rolled_losses_60_180",                               "Cumulative Rolled Losses (60–180)"),
-    ("internal_delinquency_rate",                                     "Internal Delinquency Rate"),
-    ("cumulative_internal_delinquency_rate",                          "Cumulative Internal Delinquency Rate"),
-    ("lgd_ratio",                                                     "LGD Ratio"),
-    ("ead_ratio",                                                      "EAD Ratio"),
-    ("charge_off_balance",                                            "Charge-Off Balance"),
-    ("credit_limit_per_open",                                         "Credit Limit per Open"),
-    ("spend_utilization",                                             "Spend Utilization"),
-    ("charged_late_fee",                                              "Charged Late Fee"),
-]

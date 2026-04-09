@@ -9,6 +9,7 @@ def generate(
     overview: str,
     results: list[str],
     to_discuss: list[str],
+    tag: str = "",
     brand_color: str = BRAND_PURPLE,
 ) -> str:
     results_li = "\n".join(
@@ -45,7 +46,7 @@ def generate(
     .es-num {{ color: {brand_color}; flex-shrink: 0; font-weight: 600; font-size: 0.78rem; }}
   </style>
   <div class="es-root">
-    <div class="es-tag">Model Governance</div>
+    {f'<div class="es-tag">{tag}</div>' if tag else ""}
     <h2 class="es-title">Executive Summary</h2>
     <p class="es-intro">{overview}</p>
     <div class="es-section">
