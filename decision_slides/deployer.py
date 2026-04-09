@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Optional
 
 from .databricks_client import DatabricksClient
+from .giscus import GiscusConfig, inject as giscus_inject
 
 
 _APP_PY = '''\
@@ -85,6 +86,7 @@ def deploy(
     built_html: Path,
     ws_dir: Optional[str] = None,
     description: str = "Decision slides presentation",
+    giscus: Optional[GiscusConfig] = None,
     progress_callback=None,
 ) -> str:
     """
@@ -104,6 +106,14 @@ def deploy(
             progress_callback(msg)
 
     raw = built_html.read_bytes()
+
+    # Inject Giscus comment panel if configured
+    if giscus and giscus.is_set():
+        _log("Injecting Giscus comment panel …")
+        html = raw.decode("utf-8", errors="replace")
+        html = giscus_inject(html, giscus)
+        raw = html.encode("utf-8")
+
     n_chunks = math.ceil(len(raw) / CHUNK_SIZE)
 
     if ws_dir is None:

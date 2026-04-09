@@ -82,6 +82,21 @@ class GoogleSlidesRef:
 
 
 @dataclass
+class GiscusConfig:
+    """Config for the Giscus embedded comment panel."""
+    repo: str = ""              # "owner/repo"
+    repo_id: str = ""           # GitHub node ID (R_kg...)
+    category: str = "General"
+    category_id: str = ""       # Discussion category node ID (DIC_...)
+    term: str = ""              # Comment thread identifier (usually presentation title)
+    theme: str = "light"
+    lang: str = "en"
+
+    def is_set(self) -> bool:
+        return bool(self.repo and self.repo_id and self.category_id)
+
+
+@dataclass
 class AppendixSource:
     source_type: str = "none"  # "google_slides" | "images" | "none"
     google_slides: Optional[GoogleSlidesRef] = None

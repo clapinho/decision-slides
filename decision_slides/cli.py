@@ -28,6 +28,7 @@ from .config import (
     GoogleSlidesRef,
 )
 from .databricks_client import DatabricksClient
+from .giscus import GiscusConfig, fetch_repo_id, fetch_categories, fetch_category_id
 from .generators import (
     cover as gen_cover,
     executive_summary as gen_exec,
@@ -97,6 +98,60 @@ def _ask_notebook(label: str) -> NotebookRef:
     url = _ask(f"{label} notebook URL")
     cmd = _ask_int(f"{label} command/cell number (1-based)", default=1)
     return NotebookRef(notebook_url=url, command_number=cmd)
+
+
+def _ask_giscus(presentation_title: str = "") -> Optional[GiscusConfig]:
+    """Interactively collect Giscus config, auto-fetching IDs where possible."""
+    repo = _ask("GitHub repo (owner/repo)")
+    if not repo or "/" not in repo:
+        _warn("Invalid repo — skipping Giscus")
+        return None
+
+    token = _ask("GitHub token (optional, needed to list categories)", default="", password=True)
+
+    # Fetch repo_id
+    repo_id = ""
+    try:
+        repo_id = fetch_repo_id(repo, token)
+        _ok(f"repo-id: {repo_id}")
+    except Exception as e:
+        _warn(f"Could not fetch repo-id ({e})")
+        repo_id = _ask("Paste repo-id manually (R_kg...)", default="")
+
+    # Fetch / choose category
+    category_id = ""
+    category = "General"
+    try:
+        cats = fetch_categories(repo, token)
+        if cats:
+            names = [c["name"] for c in cats]
+            console.print(f"  Available categories: [dim]{', '.join(names)}[/dim]")
+            category = _ask("Discussion category", default=cats[0]["name"])
+            for c in cats:
+                if c["name"].lower() == category.lower():
+                    category_id = c["id"]
+                    _ok(f"category-id: {category_id}")
+                    break
+        if not category_id:
+            category_id = _ask("Paste category-id manually (DIC_...)", default="")
+    except Exception as e:
+        _warn(f"Could not fetch categories ({e})")
+        category = _ask("Discussion category name", default="General")
+        category_id = _ask("Paste category-id manually (DIC_...)", default="")
+
+    if not repo_id or not category_id:
+        _warn("Missing repo-id or category-id — Giscus will be skipped")
+        _warn("Run `decision-slides giscus-setup <repo>` to get these values")
+        return None
+
+    term = _ask("Comment thread name (identifies this deck's thread)", default=presentation_title or repo.split("/")[-1])
+    theme = _ask("Theme (light / dark / preferred_color_scheme)", default="light")
+
+    return GiscusConfig(
+        repo=repo, repo_id=repo_id,
+        category=category, category_id=category_id,
+        term=term, theme=theme,
+    )
 
 
 def _ask_google_slides() -> tuple[GoogleSlidesRef, str]:
@@ -294,6 +349,14 @@ def new(slips_root, config_out):
             else:
                 _warn(f"Directory not found: {img_dir}")
 
+    # ── Giscus comments ───────────────────────
+    _header("Comments (Giscus)")
+    console.print("  [dim]Giscus embeds a floating comment panel backed by GitHub Discussions.[/dim]")
+    console.print("  [dim]Requires: public GitHub repo with Discussions enabled + Giscus app installed.[/dim]")
+    giscus_cfg: Optional[GiscusConfig] = None
+    if _ask_yn("Enable Giscus commenting?", default=False):
+        giscus_cfg = _ask_giscus(pres_title)
+
     # ── Build & deploy ────────────────────────
     _header("Build & Deploy")
     do_deploy = _ask_yn("Deploy to Databricks App after building?", default=False)
@@ -348,7 +411,9 @@ def new(slips_root, config_out):
         try:
             url = deploy(
                 client=client, app_name=app_name, built_html=built_html,
-                description=f"{pres_title} — decision slides", progress_callback=_ok,
+                description=f"{pres_title} — decision slides",
+                giscus=giscus_cfg,
+                progress_callback=_ok,
             )
             console.print()
             console.print(Panel(f"[bold green]Live at:[/bold green] {url}", border_style="green"))
@@ -378,6 +443,51 @@ def build_cmd(config_file, slips_root):
     _ok(f"Assembled {len(slides)} slides → {pres_dir}")
     built_html = build_presentation(cfg["name"], slips_path)
     _ok(f"Built: {built_html} ({built_html.stat().st_size / 1e6:.1f} MB)")
+
+
+@main.command("giscus-setup")
+@click.argument("repo")
+@click.option("--token", default="", help="GitHub personal access token (needed to list categories)")
+def giscus_setup(repo, token):
+    """Print the repo-id and category-ids needed for Giscus.
+
+    REPO should be in owner/repo format, e.g. acme/decision-slides.
+
+    Prerequisites:
+      1. Enable Discussions in the repo (Settings → Features → Discussions)
+      2. Install the Giscus GitHub App: https://github.com/apps/giscus
+    """
+    console.print(f"\n  Fetching Giscus config for [bold]{repo}[/bold] …\n")
+    try:
+        repo_id = fetch_repo_id(repo, token)
+        console.print(f"  [green]repo-id[/green]      {repo_id}")
+    except Exception as e:
+        _err(f"Could not fetch repo-id: {e}")
+        console.print("  [dim]Make sure the repo is public and exists.[/dim]")
+        return
+
+    try:
+        cats = fetch_categories(repo, token)
+        if cats:
+            console.print("\n  [green]Discussion categories:[/green]")
+            for c in cats:
+                console.print(f"    {c['name']:<30} {c['id']}")
+        else:
+            _warn("No discussion categories found. Enable Discussions in the repo settings.")
+    except Exception as e:
+        _err(f"Could not fetch categories: {e}")
+        console.print("  [dim]A GitHub token with repo scope may be required.[/dim]")
+        return
+
+    console.print(f"""
+  [dim]Add to your presentation config:[/dim]
+
+    giscus:
+      repo: {repo}
+      repo_id: {repo_id}
+      category: General
+      category_id: <paste DIC_... from above>
+""")
 
 
 @main.command("deploy")
