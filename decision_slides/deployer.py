@@ -12,43 +12,159 @@ Steps:
 from __future__ import annotations
 
 import math
-import os
 import subprocess
-import tempfile
 from pathlib import Path
 from typing import Optional
 
 from .databricks_client import DatabricksClient
-from .giscus import GiscusConfig, inject as giscus_inject
+from .comments import inject as comments_inject
 
 
 _APP_PY = '''\
-import os, glob, http.server, socketserver
+"""
+Databricks App — decision-slides presentation server with built-in comments.
+Pure stdlib — no external dependencies required.
 
-print("Loading chunks...", flush=True)
-parts = []
-for path in sorted(glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), "chunk_*.bin"))):
-    with open(path, "rb") as f:
-        parts.append(f.read())
-_content = b"".join(parts)
-print(f"Loaded {len(_content)} bytes", flush=True)
+Routes:
+  GET  /              → serves the deck HTML
+  GET  /api/me        → returns the authenticated user's display name
+  GET  /api/comments  → list comments (optional ?since=<id>)
+  POST /api/comments  → post a new comment {"author": "...", "message": "..."}
+"""
+import os, json, sqlite3
+from datetime import datetime, timezone
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from pathlib import Path
+from urllib.parse import urlparse, parse_qs
 
-class Handler(http.server.BaseHTTPRequestHandler):
+BASE_DIR = Path(__file__).parent
+
+# ── Load deck HTML from chunks ──────────────────────────────────────────────
+_parts = sorted(BASE_DIR.glob("chunk_*.bin"))
+_html  = b"".join(p.read_bytes() for p in _parts)
+print(f"Loaded {len(_html):,} bytes from {len(_parts)} chunks", flush=True)
+
+# ── SQLite comment store ────────────────────────────────────────────────────
+DB_PATH = BASE_DIR / "comments.db"
+
+def _db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS comments (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            author     TEXT NOT NULL,
+            message    TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+    """)
+    conn.commit()
+    return conn
+
+# ── Identity helpers ────────────────────────────────────────────────────────
+_ID_HEADERS = [
+    "X-Forwarded-Email",
+    "X-Databricks-User-Email",
+    "X-Forwarded-User",
+    "Remote-User",
+]
+
+def _user_name(handler) -> str:
+    for h in _ID_HEADERS:
+        v = handler.headers.get(h, "").strip()
+        if not v or v.isdigit():  # skip empty or numeric-only IDs
+            continue
+        return v.split("@")[0].replace(".", " ").title() if "@" in v else v
+    return ""
+
+def _json(handler, data, status=200):
+    body = json.dumps(data).encode()
+    handler.send_response(status)
+    handler.send_header("Content-Type", "application/json")
+    handler.send_header("Content-Length", str(len(body)))
+    handler.end_headers()
+    handler.wfile.write(body)
+
+# ── Request handler ──────────────────────────────────────────────────────────
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, fmt, *args):
+        pass  # silence access log
+
     def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(_content)))
-        self.end_headers()
-        self.wfile.write(_content)
-    def log_message(self, *a): pass
+        parsed = urlparse(self.path)
+        path   = parsed.path
 
-port = int(os.environ.get("DATABRICKS_APP_PORT", 8000))
-socketserver.TCPServer.allow_reuse_address = True
-with socketserver.TCPServer(("", port), Handler) as s:
-    s.serve_forever()
+        if path == "/":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(_html)))
+            self.end_headers()
+            self.wfile.write(_html)
+
+        elif path == "/api/me":
+            _json(self, {"name": _user_name(self)})
+
+        elif path == "/api/comments":
+            qs    = parse_qs(parsed.query)
+            since = int(qs.get("since", ["0"])[0])
+            conn  = _db()
+            rows  = conn.execute(
+                "SELECT id, author, message, created_at FROM comments WHERE id > ? ORDER BY id ASC",
+                (since,)
+            ).fetchall()
+            conn.close()
+            _json(self, [{"id": r[0], "author": r[1], "message": r[2], "created_at": r[3]} for r in rows])
+
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_POST(self):
+        if self.path != "/api/comments":
+            self.send_response(404)
+            self.end_headers()
+            return
+        length = int(self.headers.get("Content-Length", 0))
+        try:
+            body = json.loads(self.rfile.read(length))
+        except Exception:
+            _json(self, {"error": "invalid JSON"}, 400)
+            return
+
+        author  = (_user_name(self) or str(body.get("author", ""))).strip() or "Anonymous"
+        message = str(body.get("message", "")).strip()
+        if not message:
+            _json(self, {"error": "message is required"}, 400)
+            return
+        if len(message) > 2000:
+            _json(self, {"error": "message too long (max 2000 chars)"}, 400)
+            return
+
+        created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        conn = _db()
+        cur  = conn.execute(
+            "INSERT INTO comments (author, message, created_at) VALUES (?,?,?)",
+            (author, message, created_at),
+        )
+        conn.commit()
+        cid = cur.lastrowid
+        conn.close()
+        _json(self, {"id": cid, "author": author, "message": message, "created_at": created_at})
+
+# ── Entry point ─────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    port = int(os.environ.get("DATABRICKS_APP_PORT", 8000))
+    print(f"Starting on port {port}", flush=True)
+    HTTPServer(("0.0.0.0", port), Handler).serve_forever()
 '''
 
-_APP_YAML = "command:\n  - python3\n  - app.py\n"
+_APP_YAML = """\
+command:
+  - python3
+  - app.py
+"""
+
+_REQUIREMENTS_TXT = """\
+"""
 
 CHUNK_SIZE = 4 * 1024 * 1024  # 4 MB
 
@@ -86,7 +202,6 @@ def deploy(
     built_html: Path,
     ws_dir: Optional[str] = None,
     description: str = "Decision slides presentation",
-    giscus: Optional[GiscusConfig] = None,
     progress_callback=None,
 ) -> str:
     """
@@ -107,12 +222,11 @@ def deploy(
 
     raw = built_html.read_bytes()
 
-    # Inject Giscus comment panel if configured
-    if giscus and giscus.is_set():
-        _log("Injecting Giscus comment panel …")
-        html = raw.decode("utf-8", errors="replace")
-        html = giscus_inject(html, giscus)
-        raw = html.encode("utf-8")
+    # Inject built-in comment panel
+    _log("Injecting built-in comment panel …")
+    html = raw.decode("utf-8", errors="replace")
+    html = comments_inject(html)
+    raw = html.encode("utf-8")
 
     n_chunks = math.ceil(len(raw) / CHUNK_SIZE)
 
@@ -129,6 +243,9 @@ def deploy(
 
     _log("Uploading app.yaml …")
     client.upload_workspace_file(f"{ws_dir}/app.yaml", _APP_YAML.encode())
+
+    _log("Uploading requirements.txt …")
+    client.upload_workspace_file(f"{ws_dir}/requirements.txt", _REQUIREMENTS_TXT.encode())
 
     _log(f"Uploading {n_chunks} chunk(s) ({len(raw) / 1e6:.1f} MB total) …")
     for i in range(n_chunks):

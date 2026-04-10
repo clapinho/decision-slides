@@ -17,6 +17,8 @@ import shutil
 from pathlib import Path
 from importlib import resources
 
+from .context import ContextStore
+
 
 SLIPS_INDEX_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
@@ -47,6 +49,7 @@ def assemble(
     slides: list[tuple[str, str]],
     title: str,
     presentations_root: Path | None = None,
+    text_context: dict | None = None,
 ) -> Path:
     """
     Write all slide HTML files and slides.json to the presentation folder.
@@ -63,6 +66,12 @@ def assemble(
 
     pres_dir = presentations_root / name
     pres_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save text content to context store
+    ctx = ContextStore(pres_dir)
+    if text_context:
+        for key, value in text_context.items():
+            ctx.save_text(key, value)
 
     filenames = []
     for filename, html in slides:

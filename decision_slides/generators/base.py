@@ -80,8 +80,29 @@ def image_slide(
     b64: str,
     alt: str = "",
     notes: str = "",
+    description: str = "",
 ) -> str:
-    """Slide with a single full-body image."""
-    body = f'      <img style="width:100%;height:100%;object-fit:contain;object-position:center" src="data:image/png;base64,{b64}" alt="{alt}" />'
-    return slide_html(slide_id, section_label, title, body, notes=notes,
-                      extra_css=".sl-body { display:flex; align-items:center; justify-content:center; }")
+    """Slide with a single full-body image.
+
+    If *description* is provided it is rendered as a small italic summary
+    between the slide header and the chart image.
+    """
+    if description:
+        desc_html = (
+            f'      <p style="margin:0 0 0.5rem;font-size:0.78rem;color:#374151;'
+            f'font-style:italic;line-height:1.4;flex-shrink:0">{description}</p>\n'
+        )
+        img_style = "width:100%;height:100%;object-fit:contain;object-position:center"
+        body = (
+            f'<div style="display:flex;flex-direction:column;height:100%">\n'
+            f'{desc_html}'
+            f'      <div style="flex:1;min-height:0;display:flex;align-items:center;justify-content:center">'
+            f'<img style="{img_style}" src="data:image/png;base64,{b64}" alt="{alt}" /></div>\n'
+            f'    </div>'
+        )
+        extra_css = ""
+    else:
+        body = f'      <img style="width:100%;height:100%;object-fit:contain;object-position:center" src="data:image/png;base64,{b64}" alt="{alt}" />'
+        extra_css = ".sl-body { display:flex; align-items:center; justify-content:center; }"
+
+    return slide_html(slide_id, section_label, title, body, notes=notes, extra_css=extra_css)

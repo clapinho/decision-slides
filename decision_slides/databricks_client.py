@@ -180,14 +180,17 @@ class DatabricksClient:
     # ── Apps ─────────────────────────────────────────────────────────────────
 
     def create_or_get_app(self, name: str, description: str = "") -> dict:
-        resp = self._post("/api/2.0/apps", {"name": name, "description": description})
-        return resp
+        try:
+            return self._post("/api/2.0/apps", {"name": name, "description": description})
+        except requests.HTTPError as e:
+            if e.response is not None and e.response.status_code == 409:
+                return self._get(f"/api/2.0/apps/{name}")
+            raise
 
     def deploy_app(self, app_name: str, source_path: str) -> str:
         """Deploy an app. Returns deployment_id."""
         resp = self._post(f"/api/2.0/apps/{app_name}/deployments", {
             "source_code_path": source_path,
-            "mode": "SNAPSHOT",
         })
         return resp.get("deployment_id", "")
 
@@ -224,15 +227,27 @@ class DatabricksClient:
 
     def _get(self, path: str, params: dict | None = None) -> dict:
         r = requests.get(f"{self.base}{path}", headers=self._headers, params=params)
-        r.raise_for_status()
+        if not r.ok:
+            raise requests.HTTPError(
+                f"{r.status_code} {r.reason} on GET {path}: {r.text[:500]}",
+                response=r,
+            )
         return r.json()
 
     def _post(self, path: str, body: dict) -> dict:
         r = requests.post(f"{self.base}{path}", headers=self._headers, json=body)
-        r.raise_for_status()
+        if not r.ok:
+            raise requests.HTTPError(
+                f"{r.status_code} {r.reason} on POST {path}: {r.text[:500]}",
+                response=r,
+            )
         return r.json()
 
     def _put(self, path: str, body: dict) -> dict:
         r = requests.put(f"{self.base}{path}", headers=self._headers, json=body)
-        r.raise_for_status()
+        if not r.ok:
+            raise requests.HTTPError(
+                f"{r.status_code} {r.reason} on PUT {path}: {r.text[:500]}",
+                response=r,
+            )
         return r.json()

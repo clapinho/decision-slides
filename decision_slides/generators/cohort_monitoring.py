@@ -7,7 +7,7 @@ from ..charts import cohort_monitoring_chart
 from .base import image_slide, BRAND_PURPLE
 
 
-def fetch_data(client, cfg: CohortMonitoringConfig):
+def fetch_data(client, cfg: CohortMonitoringConfig, ctx=None):
     """Fetch cohort monitoring data from the configured table."""
     import pandas as pd
 
@@ -32,6 +32,8 @@ def fetch_data(client, cfg: CohortMonitoringConfig):
     # Rename band column to expected name for chart function
     if cfg.band_column != "risk_band" and cfg.band_column in df.columns:
         df = df.rename(columns={cfg.band_column: "risk_band"})
+    if ctx:
+        ctx.save_dataframe("cohort_monitoring", df, sql=sql)
     return df
 
 
@@ -45,11 +47,17 @@ def generate_all(
     cfg: CohortMonitoringConfig,
     brand_color: str = BRAND_PURPLE,
     start_index: int = 1,
+    annotator=None,
 ) -> list[tuple[str, str]]:
     """
     Generate one slide per metric.
     If cfg.metrics is empty, all numeric columns (excluding band/cohort/month) are used.
     Returns list of (filename, html) pairs.
+
+    Args:
+        annotator: Optional SlideAnnotator instance. When provided, each chart image
+                   is passed through vision LLM to generate a short description
+                   rendered between the slide title and the chart.
     """
     import pandas as pd
 
@@ -80,6 +88,17 @@ def generate_all(
             brand_color=brand_color,
         )
 
+        description = ""
+        if annotator:
+            try:
+                import base64 as _b64
+                description = annotator.describe_chart(
+                    _b64.b64decode(b64),
+                    metric=metric,
+                )
+            except Exception as e:
+                description = ""  # silently skip if vision call fails
+
         slide_id = f"cohort-{metric.replace('_', '-')[:40]}"
         html = image_slide(
             slide_id=slide_id,
@@ -87,6 +106,7 @@ def generate_all(
             title=f"Cohort Monitoring · {display_title}",
             b64=b64,
             alt=display_title,
+            description=description,
         )
 
         abbrev = metric.replace("_", "-")[:50]

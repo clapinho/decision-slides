@@ -97,9 +97,12 @@ def inject(html: str, cfg: GiscusConfig) -> str:
     """
     term = cfg.term or "decision-slides"
     widget = _build_widget(cfg, term)
-    # Inject just before </body>
-    if "</body>" in html:
-        return html.replace("</body>", widget + "\n</body>", 1)
+    # Use rfind to get the LAST </body> — the slips framework JS contains
+    # </body> as a string literal inside a <script> block, so replacing the
+    # first occurrence would inject inside the script and break the JS.
+    idx = html.rfind("</body>")
+    if idx != -1:
+        return html[:idx] + widget + "\n</body>" + html[idx + len("</body>"):]
     return html + widget
 
 

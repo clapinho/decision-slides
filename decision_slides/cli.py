@@ -44,6 +44,7 @@ from .generators import (
     appendix as gen_appendix,
 )
 from .assembler import assemble
+from .context import ContextStore
 from .deployer import build_presentation, deploy
 
 console = Console()
@@ -349,14 +350,6 @@ def new(slips_root, config_out):
             else:
                 _warn(f"Directory not found: {img_dir}")
 
-    # ── Giscus comments ───────────────────────
-    _header("Comments (Giscus)")
-    console.print("  [dim]Giscus embeds a floating comment panel backed by GitHub Discussions.[/dim]")
-    console.print("  [dim]Requires: public GitHub repo with Discussions enabled + Giscus app installed.[/dim]")
-    giscus_cfg: Optional[GiscusConfig] = None
-    if _ask_yn("Enable Giscus commenting?", default=False):
-        giscus_cfg = _ask_giscus(pres_title)
-
     # ── Build & deploy ────────────────────────
     _header("Build & Deploy")
     do_deploy = _ask_yn("Deploy to Databricks App after building?", default=False)
@@ -372,6 +365,7 @@ def new(slips_root, config_out):
 
     # ── Generate slides ───────────────────────
     _header("Generating slides")
+    pres_dir = slips_path / "presentations" / pres_name
     slides = _generate_slides(
         client=client,
         pres_title=pres_title, squad=squad, date=date,
@@ -390,6 +384,8 @@ def new(slips_root, config_out):
         cohort_cfg=cohort_cfg,
         appendix_google=appendix_google, appendix_google_token=appendix_google_token,
         appendix_image_paths=appendix_image_paths, appendix_choice=appendix_choice,
+        pres_dir=pres_dir,
+        annotator=None,  # wizard: add --annotate support via future prompt question
     )
 
     pres_dir = assemble(pres_name, slides, pres_title, slips_path / "presentations")
@@ -412,7 +408,6 @@ def new(slips_root, config_out):
             url = deploy(
                 client=client, app_name=app_name, built_html=built_html,
                 description=f"{pres_title} — decision slides",
-                giscus=giscus_cfg,
                 progress_callback=_ok,
             )
             console.print()
@@ -430,15 +425,29 @@ def new(slips_root, config_out):
 @main.command("build")
 @click.argument("config_file", type=click.Path(exists=True))
 @click.option("--slips-root", type=click.Path(), default=None)
-def build_cmd(config_file, slips_root):
+@click.option("--annotate", is_flag=True, default=False,
+              help="Use vision LLM to auto-generate chart descriptions for each slide.")
+@click.option("--annotate-model", default=None,
+              help="LiteLLM model string for annotations (default: anthropic/claude-sonnet-4-6).")
+def build_cmd(config_file, slips_root, annotate, annotate_model):
     """Build presentation from a saved config YAML file."""
     slips_path = Path(slips_root) if slips_root else Path.home() / "slips"
     cfg = yaml.safe_load(Path(config_file).read_text(encoding="utf-8"))
     db = cfg["databricks"]
     client = DatabricksClient(DatabricksConfig(**db))
 
+    annotator = None
+    if annotate:
+        from .ai_annotator import SlideAnnotator
+        annotator = SlideAnnotator(model=annotate_model)
+        _ok(f"AI annotations enabled (model: {annotator.model})")
+
     _header("Building from config")
-    slides = _generate_slides_from_dict(client, cfg)
+    slides = _generate_slides_from_dict(
+        client, cfg,
+        pres_dir=slips_path / "presentations" / cfg["name"],
+        annotator=annotator,
+    )
     pres_dir = assemble(cfg["name"], slides, cfg["title"], slips_path / "presentations")
     _ok(f"Assembled {len(slides)} slides → {pres_dir}")
     built_html = build_presentation(cfg["name"], slips_path)
@@ -555,13 +564,29 @@ def _generate_slides(
     appendix_google_token: str,
     appendix_image_paths: list[str],
     appendix_choice: str,
+    pres_dir: Path | None = None,
+    annotator=None,
 ) -> list[tuple[str, str]]:
+
+    ctx = ContextStore(pres_dir) if pres_dir else None
+    if ctx:
+        ctx.save_text("executive_summary", {
+            "tag": exec_tag,
+            "overview": overview,
+            "results": results,
+            "to_discuss": to_discuss,
+        })
+        ctx.save_text("risks", {
+            "risks": risks_list,
+            "limitations": lim_list,
+            "opportunities": opp_list,
+        })
 
     slides: list[tuple[str, str]] = []
 
     def _nb_slide(filename, gen_fn, notebook, title, slide_id, section):
         try:
-            html = gen_fn(client, notebook, title=title)
+            html = gen_fn(client, notebook, title=title, ctx=ctx)
             slides.append((filename, html))
             _ok(title)
         except Exception as e:
@@ -591,7 +616,7 @@ def _generate_slides(
     # 6. NPV Results
     console.print("  [dim]→[/dim] NPV Results …")
     try:
-        npv_data = gen_npv.fetch_data(client, npv_cfg)
+        npv_data = gen_npv.fetch_data(client, npv_cfg, ctx=ctx)
         slides.append(("06-npv-results.html",
             gen_npv.generate(npv_data, chart_type=npv_chart, title=npv_slide_title,
                              y_label=npv_y_label, band_label=npv_band_label)))
@@ -628,8 +653,8 @@ def _generate_slides(
     # 11. Cohort Monitoring
     console.print("  [dim]→[/dim] Cohort Monitoring (fetching data) …")
     try:
-        cohort_df = gen_cohort.fetch_data(client, cohort_cfg)
-        cohort_slides = gen_cohort.generate_all(cohort_df, cohort_cfg)
+        cohort_df = gen_cohort.fetch_data(client, cohort_cfg, ctx=ctx)
+        cohort_slides = gen_cohort.generate_all(cohort_df, cohort_cfg, annotator=annotator)
         for i, (fn, html) in enumerate(cohort_slides):
             slides.append((f"11-{i + 1:02d}-{fn}", html))
         _ok(f"Cohort Monitoring ({len(cohort_slides)} metrics)")
@@ -658,7 +683,7 @@ def _generate_slides(
     return slides
 
 
-def _generate_slides_from_dict(client: DatabricksClient, cfg: dict) -> list[tuple[str, str]]:
+def _generate_slides_from_dict(client: DatabricksClient, cfg: dict, pres_dir: Path | None = None, annotator=None) -> list[tuple[str, str]]:
     def _nb(d):
         return NotebookRef(**d) if d else NotebookRef()
 
@@ -736,6 +761,8 @@ def _generate_slides_from_dict(client: DatabricksClient, cfg: dict) -> list[tupl
         appendix_google_token=ap.get("google_token", ""),
         appendix_image_paths=ap.get("image_paths", []),
         appendix_choice=ap.get("type", "none"),
+        pres_dir=pres_dir,
+        annotator=annotator,
     )
 
 

@@ -86,6 +86,47 @@ One slide per metric column. All parameters are generic:
 | `metrics` | all numeric | Limit to specific columns |
 | `max_month` | `18` | X-axis upper bound |
 
+## Live comments (Giscus)
+
+Add a floating 💬 button to your deployed deck so viewers can comment without leaving the page. Comments are stored as GitHub Discussions and visible to everyone with the link.
+
+### One-time setup
+
+**1. Enable GitHub Discussions on your repo**
+Go to your repo → Settings → Features → check **Discussions**.
+
+**2. Install the Giscus GitHub App**
+Visit https://github.com/apps/giscus → Install → select your repo.
+
+**3. Get your repo ID and category ID**
+Run:
+```bash
+decision-slides giscus-setup <owner>/<repo>
+```
+This prints the `repo_id` and `category_id` values you need.
+
+Alternatively, visit https://giscus.app, enter your repo name, and copy the IDs from the generated script tag.
+
+### Add to your deck
+
+When running `decision-slides new` or `decision-slides build`, you will be prompted for Giscus config. Enter:
+
+| Field | Example |
+|---|---|
+| Repo | `owner/repo` |
+| Repo ID | `R_kg...` |
+| Category | `General` |
+| Category ID | `DIC_kwD...` |
+| Term | your presentation title |
+
+The comment panel is injected into the built HTML before deployment.
+
+### Important notes
+
+- Comments require a **GitHub account** to post
+- Comments are **not real-time** — viewers must refresh the page to see new ones
+- The injection must replace the **last** `</body>` tag in the HTML — the slips framework contains `</body>` as a string literal inside its JavaScript, so replacing the first occurrence breaks the page
+
 ## Databricks App deployment
 
 The built HTML is split into ≤4 MB chunks and uploaded as workspace `FILE` objects. The app serves them via Python's stdlib `http.server` — no extra dependencies needed.

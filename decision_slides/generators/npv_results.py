@@ -7,7 +7,7 @@ from ..charts import npv_line_chart, npv_bar_chart
 from .base import image_slide, BRAND_PURPLE
 
 
-def fetch_data(client, cfg: NpvTablesConfig) -> dict[str, dict[int, float]]:
+def fetch_data(client, cfg: NpvTablesConfig, ctx=None) -> dict[str, dict[int, float]]:
     """
     Query each configured table and return {series_label: {band_value: npv}}.
     Series without a table name are skipped.
@@ -51,6 +51,8 @@ def fetch_data(client, cfg: NpvTablesConfig) -> dict[str, dict[int, float]]:
         if cfg.risk_bands and band not in cfg.risk_bands:
             continue
         result.setdefault(label, {})[band] = npv
+    if ctx:
+        ctx.save_npv_data(result)
     return result
 
 
