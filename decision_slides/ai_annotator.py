@@ -29,17 +29,18 @@ SYSTEM_PROMPT = """You are a concise financial analyst writing 2-sentence slide 
 No markdown, no bullet points. Plain text only."""
 
 COHORT_USER_PROMPT = """\
-This is a cohort monitoring chart for a credit card portfolio segmented by Aki risk bands: \
-low Aki (21, 25), high Aki (26, 27), and marginal band (28). \
-The x-axis shows cohort months, lines are coloured by Aki band, \
-black dashed = actuals, grey dotted = pClip model predictions.
+This is a cohort monitoring chart segmented by Aki risk bands: low Aki (21, 25), high Aki (26, 27), marginal (28). \
+There are two prediction lines: actuals predictions (coloured solid lines per band) and pClip predictions (grey dotted). \
+Black dashed = actuals. Short term = months 1–5, long term = months > 5.
 
-Describe the chart following this exact structure:
-1. How actuals compare to pClip predictions for low and high Aki bands in the short term (months 1–5).
-2. Any notable variability for the marginal band Aki 28.
-3. How recent cohorts (202501 onwards) behave — compare short term vs long term and actuals vs predictions.
+In 2–3 short sentences, for each Aki group state:
+- Whether actuals are above or below actuals predictions (short term and long term)
+- Whether actuals are above or below pClip predictions (short term and long term)
 
-The metric shown is: {metric}
+Be concise. Example format: "Low Aki: actuals [above/below/matching] actuals predictions and [above/below/matching] \
+pClip short term; [above/below/matching] actuals predictions and [above/below/matching] pClip long term. High Aki: … Marginal Aki 28: …"
+
+Metric: {metric}
 {extra_context}"""
 
 GENERIC_USER_PROMPT = """This is a slide chart titled "{title}".
