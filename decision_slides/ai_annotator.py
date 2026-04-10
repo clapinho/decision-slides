@@ -25,20 +25,26 @@ from typing import Any
 
 DEFAULT_MODEL = "anthropic/claude-sonnet-4-6"
 
-SYSTEM_PROMPT = """You are a financial analyst writing concise slide annotations for a credit decision presentation.
-When shown a chart, produce 2–3 sentences that:
-- State the headline trend (improving / deteriorating / stable)
-- Highlight any notable segment differences or turning points
-- Use plain, direct language — no bullets, no headers, no markdown
-Keep it under 60 words."""
+SYSTEM_PROMPT = """You are a concise financial analyst writing 2-sentence slide annotations for a credit risk presentation.
+No markdown, no bullet points. Plain text only."""
 
-COHORT_USER_PROMPT = """This chart shows cohort monitoring data for the metric: {metric}.
-{extra_context}
-Write a 2–3 sentence annotation describing the key trends visible — focus on short-term vs long-term behavior,
-any divergence between segments (Aki bands), and how actuals compare to model benchmarks (pClip / dashed lines)."""
+COHORT_USER_PROMPT = """\
+This is a cohort monitoring chart for a credit card portfolio segmented by Aki risk bands: \
+low Aki (21, 25), high Aki (26, 27), and marginal band (28). \
+The x-axis shows cohort months, lines are coloured by Aki band, \
+black dashed = actuals, grey dotted = pClip model predictions.
+
+Describe the chart following this exact structure:
+1. How actuals compare to pClip predictions for low and high Aki bands in the short term (months 1–5).
+2. Any notable variability for the marginal band Aki 28.
+3. How recent cohorts (202501 onwards) behave — compare short term vs long term and actuals vs predictions.
+
+The metric shown is: {metric}
+{extra_context}"""
 
 GENERIC_USER_PROMPT = """This is a slide chart titled "{title}".
-Write a 2–3 sentence annotation summarizing the key insight a decision-maker should take from this chart."""
+Write a 2–3 sentence annotation summarizing the key insight a decision-maker should take from this chart.
+No markdown, plain text only."""
 
 
 class SlideAnnotator:
@@ -48,7 +54,7 @@ class SlideAnnotator:
         self,
         model: str | None = None,
         api_key: str | None = None,
-        max_tokens: int = 150,
+        max_tokens: int = 180,
     ):
         self.model = model or os.environ.get("LITELLM_MODEL", DEFAULT_MODEL)
         self.max_tokens = max_tokens
