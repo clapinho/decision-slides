@@ -45,7 +45,10 @@ _html  = b"".join(p.read_bytes() for p in _parts)
 print(f"Loaded {len(_html):,} bytes from {len(_parts)} chunks", flush=True)
 
 # ── SQLite comment store ────────────────────────────────────────────────────
-DB_PATH = BASE_DIR / "comments.db"
+# Store outside the snapshot dir so comments survive redeployments.
+# Override with COMMENTS_DB_PATH env var for a truly persistent location.
+_default_db = Path(os.environ.get("COMMENTS_DB_PATH", "/tmp/decision-slides-comments.db"))
+DB_PATH = _default_db
 
 def _db():
     conn = sqlite3.connect(DB_PATH)
